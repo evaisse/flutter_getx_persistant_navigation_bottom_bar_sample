@@ -1,23 +1,15 @@
-import 'dart:convert';
-
+import 'package:darty_json/darty_json.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 void main() {
   runApp(GetMaterialApp(
     debugShowCheckedModeBanner: false,
-    initialRoute: '/home',
+    initialRoute: HomePage.route.name,
     defaultTransition: Transition.fade,
     getPages: [
-      GetPage(
-        name: '/home',
-        page: () => const HomePage(),
-      ),
-      GetPage(
-        name: '/another',
-        page: () => const AnotherPage(),
-        binding: AnotherPageBindings(),
-      ),
+      HomePage.route,
+      AnotherPage.route,
     ],
     initialBinding: AppBindings(),
   ));
@@ -26,40 +18,50 @@ void main() {
 class AppBindings extends Bindings {
   @override
   void dependencies() {
-    Get.lazyPut<ItemProvider>(() => ItemProvider());
+    Get.lazyPut<CocktailDbProvider>(() => CocktailDbProvider());
 
     // controllers
     Get.lazyPut<HomeController>(() => HomeController());
     Get.lazyPut<BrowseController>(() => BrowseController());
     Get.lazyPut<HistoryController>(() => HistoryController());
     Get.lazyPut<ItemDetailController>(() => ItemDetailController());
-    Get.lazyPut<SettingsController>(() => SettingsController());
+    Get.lazyPut<ProfileController>(() => ProfileController());
   }
 }
 
-class Item {
+class Cocktail {
   String id;
   String name;
   String description;
   Uri? imageUrl;
 
-  Item(this.id, this.name, this.description, this.imageUrl);
+  Cocktail(this.id, this.name, this.description, this.imageUrl);
 
-  factory Item.fromJson(dynamic e) {
-    var i = e['drinks'] as Map<String, dynamic>;
-    return Item(i['idDrink'], i['strDrink'], i['strI'], i['strDrinkThumb'] ? Uri.parse(i['strDrinkThumb']) : null);
+  factory Cocktail.fromJson(Json json) {
+    return Cocktail(
+      json['idDrink'].stringValue,
+      json['strDrink'].stringValue,
+      json['strInstructions'].stringValue,
+      json['strDrinkThumb'].booleanValue ? Uri.parse(json['strDrinkThumb'].stringValue) : null,
+    );
   }
 }
 
-class ItemProvider extends GetConnect {
-  Future<List<Item>> fetchSome() async {
-    var res = await get('https://www.thecocktaildb.com/api/json/v1/1/search.php?f=a');
-    return (jsonDecode(res.bodyString ?? '{}') as List).map((e) => Item.fromJson(e)).toList();
+class CocktailDbProvider extends GetConnect {
+  Future<Json> fetch(String url) async {
+    var res = await get(url);
+    if (res.statusCode != 200) throw 'Api error, response ${res.statusCode} ${res.bodyString}';
+    return Json.fromString(res.bodyString ?? '{}');
   }
 
-  Future<Item> fetchOne(String id) async {
-    var res = await get('https://www.thecocktaildb.com/api/json/v1/1/lookup.php?i=$id');
-    return Item.fromJson(jsonDecode(res.bodyString ?? '{}') as Map);
+  Future<List<Cocktail>> fetchSome() async {
+    var res = await fetch('https://www.thecocktaildb.com/api/json/v1/1/search.php?f=a');
+    return res['drinks'].listValue.map((e) => Cocktail.fromJson(e)).toList();
+  }
+
+  Future<Cocktail> fetchOne(String id) async {
+    var res = await fetch('https://www.thecocktaildb.com/api/json/v1/1/lookup.php?i=$id');
+    return Cocktail.fromJson(res);
   }
 }
 
@@ -68,36 +70,34 @@ class BarService extends GetxService {}
 class HomeController extends GetxController {
   var currentIndex = 0.obs;
 
-  final pages = <String>['/browse', '/history', '/settings'];
+  final pages = <GetPage>[
+    BrowsePage.route,
+    HistoryPage.route,
+    ProfilePage.route,
+  ];
 
   void changePage(int index) {
     currentIndex.value = index;
-    Get.toNamed(pages[index], id: 1);
+    Get.toNamed(pages[index].name, id: 1);
   }
 
   Route onGenerateRoute(RouteSettings settings) {
-    if (settings.name == '/history') {
-      return GetPageRoute(
-        settings: settings,
-        page: () => const HistoryPage(),
-      );
-    }
+    var routeName = settings.name;
+    var searchPages = [HomePage.route, ItemDetailPage.route];
+    searchPages.addAll(pages);
+    routeName = routeName == '/' ? pages.first.name : routeName;
+    var p = searchPages.firstWhere((element) => element.name == routeName);
 
-    if (settings.name == '/settings') {
-      return GetPageRoute(
-        settings: settings,
-        page: () => const SettingsPage(),
-      );
-    }
-
-    return GetPageRoute(
-      settings: settings,
-      page: () => const BrowsePage(),
-    );
+    return GetPageRoute(routeName: p.name, settings: settings, page: p.page);
   }
 }
 
 class HomePage extends GetView<HomeController> {
+  static var route = GetPage(
+    name: '/home',
+    page: () => const HomePage(),
+  );
+
   const HomePage({Key? key}) : super(key: key);
 
   @override
@@ -105,7 +105,7 @@ class HomePage extends GetView<HomeController> {
     return Scaffold(
       body: Navigator(
         key: Get.nestedKey(1),
-        initialRoute: '/browse',
+        initialRoute: controller.pages[0].name,
         onGenerateRoute: controller.onGenerateRoute,
       ),
       bottomNavigationBar: Obx(
@@ -121,7 +121,7 @@ class HomePage extends GetView<HomeController> {
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.settings),
-              label: 'Settings',
+              label: 'Profile',
             ),
           ],
           currentIndex: controller.currentIndex.value,
@@ -133,7 +133,25 @@ class HomePage extends GetView<HomeController> {
   }
 }
 
+class BrowseController extends GetxController with StateMixin<List<Cocktail>> {
+  final title = 'Browser'.obs;
+
+  @override
+  void onInit() async {
+    super.onInit();
+    change(null, status: RxStatus.loading());
+    try {
+      var items = await Get.find<CocktailDbProvider>().fetchSome();
+      change(items, status: items.isNotEmpty ? RxStatus.success() : RxStatus.empty());
+    } catch (e) {
+      change(null, status: RxStatus.error("$e"));
+    }
+  }
+}
+
 class BrowsePage extends GetView<BrowseController> {
+  static final route = GetPage(name: '/browse', page: () => const BrowsePage());
+
   const BrowsePage({Key? key}) : super(key: key);
 
   @override
@@ -141,16 +159,43 @@ class BrowsePage extends GetView<BrowseController> {
     var title = Text(controller.title.value);
     return Scaffold(
       appBar: AppBar(title: title),
-      body: Center(
-        child: Container(
-          child: title,
-        ),
+      body: controller.obx(
+        (state) => buildListView(context, state!),
+        // here you can put your custom loading indicator, but
+        // by default would be Center(child:CircularProgressIndicator())
+        // onLoading: CustomLoadingIndicator(),
+        onEmpty: Text('No data found'),
+        // here also you can set your own error widget, but by
+        // default will be an Center(child:Text(error))
+        // onError: (error)=>Text(error),
       ),
+    );
+  }
+
+  buildListView(BuildContext context, List<Cocktail> state) {
+    return ListView.builder(
+      itemCount: state.length,
+      itemBuilder: (context, index) {
+        var item = state[index];
+        return ListTile(
+          title: Text(item.name),
+          subtitle: Text(item.id),
+          onTap: () {
+            Get.toNamed(ItemDetailPage.route.name, id: 1);
+          },
+        );
+      },
     );
   }
 }
 
+class HistoryController extends GetxController {
+  final title = 'History'.obs;
+}
+
 class HistoryPage extends GetView<HistoryController> {
+  static final route = GetPage(name: '/history', page: () => const HistoryPage());
+
   const HistoryPage({Key? key}) : super(key: key);
 
   @override
@@ -167,13 +212,19 @@ class HistoryPage extends GetView<HistoryController> {
   }
 }
 
-class SettingsPage extends GetView<SettingsController> {
-  const SettingsPage({Key? key}) : super(key: key);
+class ProfileController extends GetxController {
+  final title = 'Profile'.obs;
+}
+
+class ProfilePage extends GetView<ProfileController> {
+  static var route = GetPage(name: '/settings', page: () => const ProfilePage());
+
+  const ProfilePage({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: const Text('Profile')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -192,23 +243,13 @@ class SettingsPage extends GetView<SettingsController> {
   }
 }
 
-class BrowseController extends GetxController {
-  final title = 'Browser'.obs;
-}
-
-class HistoryController extends GetxController {
-  final title = 'History'.obs;
-}
-
-class SettingsController extends GetxController {
-  final title = 'Settings'.obs;
-}
-
 class ItemDetailController extends GetxController {
   final title = 'detail'.obs;
 }
 
 class ItemDetailPage extends GetView<ItemDetailController> {
+  static final route = GetPage(name: '/browse/cocktails/:id', page: () => ItemDetailPage());
+
   const ItemDetailPage({Key? key}) : super(key: key);
 
   @override
@@ -237,11 +278,18 @@ class AnotherPageController extends GetxController {
 
   @override
   void onInit() {
+    super.onInit();
     counter.value = counter.value + 1;
   }
 }
 
 class AnotherPage extends GetView<AnotherPageController> {
+  static var route = GetPage(
+    name: '/another',
+    page: () => const AnotherPage(),
+    binding: AnotherPageBindings(),
+  );
+
   const AnotherPage({Key? key}) : super(key: key);
 
   @override
