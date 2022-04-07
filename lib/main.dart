@@ -24,7 +24,7 @@ class AppBindings extends Bindings {
     Get.lazyPut<HomeController>(() => HomeController());
     Get.lazyPut<BrowseController>(() => BrowseController());
     Get.lazyPut<HistoryController>(() => HistoryController());
-    Get.lazyPut<ItemDetailController>(() => ItemDetailController());
+    Get.lazyPut<ItemDetailController>(() => ItemDetailController(), fenix: true);
     Get.lazyPut<ProfileController>(() => ProfileController());
   }
 }
