@@ -9,7 +9,7 @@ void main() {
     defaultTransition: Transition.fade,
     getPages: [
       HomePage.route,
-      AnotherPage.route,
+      AnotherScreen.route,
     ],
     initialBinding: AppBindings(),
   ));
@@ -48,19 +48,19 @@ class Cocktail {
 }
 
 class CocktailDbProvider extends GetConnect {
-  Future<Json> fetch(String url) async {
+  Future<Json> _fetch(String url) async {
     var res = await get(url);
     if (res.statusCode != 200) throw 'Api error, response ${res.statusCode} ${res.bodyString}';
     return Json.fromString(res.bodyString ?? '{}');
   }
 
   Future<List<Cocktail>> fetchSome() async {
-    var res = await fetch('https://www.thecocktaildb.com/api/json/v1/1/search.php?f=a');
+    var res = await _fetch('https://www.thecocktaildb.com/api/json/v1/1/search.php?f=a');
     return res['drinks'].listValue.map((e) => Cocktail.fromJson(e)).toList();
   }
 
   Future<Cocktail> fetchOne(String id) async {
-    var res = await fetch('https://www.thecocktaildb.com/api/json/v1/1/lookup.php?i=$id');
+    var res = await _fetch('https://www.thecocktaildb.com/api/json/v1/1/lookup.php?i=$id');
     return Cocktail.fromJson(res);
   }
 }
@@ -71,9 +71,9 @@ class HomeController extends GetxController {
   var currentIndex = 0.obs;
 
   final pages = <GetPage>[
-    BrowsePage.route,
-    HistoryPage.route,
-    ProfilePage.route,
+    BrowseScreen.page,
+    HistoryScreen.page,
+    ProfileScreen.route,
   ];
 
   void changePage(int index) {
@@ -83,7 +83,7 @@ class HomeController extends GetxController {
 
   Route onGenerateRoute(RouteSettings settings) {
     var routeName = settings.name;
-    var searchPages = [HomePage.route, ItemDetailPage.route];
+    var searchPages = [HomePage.route, ItemDetailScreen.route];
     searchPages.addAll(pages);
     routeName = routeName == '/' ? pages.first.name : routeName;
     var p = searchPages.firstWhere((element) => element.name == routeName);
@@ -149,10 +149,10 @@ class BrowseController extends GetxController with StateMixin<List<Cocktail>> {
   }
 }
 
-class BrowsePage extends GetView<BrowseController> {
-  static final route = GetPage(name: '/browse', page: () => const BrowsePage());
+class BrowseScreen extends GetView<BrowseController> {
+  static final page = GetPage(name: '/browse', page: () => const BrowseScreen());
 
-  const BrowsePage({Key? key}) : super(key: key);
+  const BrowseScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +181,12 @@ class BrowsePage extends GetView<BrowseController> {
           title: Text(item.name),
           subtitle: Text(item.id),
           onTap: () {
-            Get.toNamed(ItemDetailPage.route.name, id: 1);
+            Get.to(
+              ItemDetailScreen.route.page(),
+              transition: Transition.leftToRight,
+              arguments: {"id": item.id},
+              id: 1,
+            );
           },
         );
       },
@@ -193,10 +198,10 @@ class HistoryController extends GetxController {
   final title = 'History'.obs;
 }
 
-class HistoryPage extends GetView<HistoryController> {
-  static final route = GetPage(name: '/history', page: () => const HistoryPage());
+class HistoryScreen extends GetView<HistoryController> {
+  static final page = GetPage(name: '/history', page: () => const HistoryScreen());
 
-  const HistoryPage({Key? key}) : super(key: key);
+  const HistoryScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -216,15 +221,17 @@ class ProfileController extends GetxController {
   final title = 'Profile'.obs;
 }
 
-class ProfilePage extends GetView<ProfileController> {
-  static var route = GetPage(name: '/settings', page: () => const ProfilePage());
+class ProfileScreen extends GetView<ProfileController> {
+  static var route = GetPage(name: '/profile', page: () => const ProfileScreen());
 
-  const ProfilePage({Key? key}) : super(key: key);
+  const ProfileScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
+      appBar: AppBar(
+        title: const Text('Profile'),
+      ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -243,23 +250,40 @@ class ProfilePage extends GetView<ProfileController> {
   }
 }
 
-class ItemDetailController extends GetxController {
+class ItemDetailController extends GetxController with StateMixin<Cocktail> {
   final title = 'detail'.obs;
+
+  @override
+  void onInit() async {
+    change(null, status: RxStatus.loading());
+    try {
+      var res = await Get.find<CocktailDbProvider>().fetchOne(Get.parameters['id']!);
+      change(res, status: RxStatus.success());
+    } catch (e) {
+      change(null, status: RxStatus.error("$e"));
+    }
+  }
 }
 
-class ItemDetailPage extends GetView<ItemDetailController> {
-  static final route = GetPage(name: '/browse/cocktails/:id', page: () => ItemDetailPage());
+class ItemDetailScreen extends GetView<ItemDetailController> {
+  static final route = GetPage(name: '/browse/cocktails/:id', page: () => ItemDetailScreen());
 
-  const ItemDetailPage({Key? key}) : super(key: key);
+  const ItemDetailScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     var title = Text(controller.title.value);
     return Scaffold(
-      appBar: AppBar(title: title),
+      appBar: AppBar(
+        title: controller.obx(
+          (state) => Text(state?.name ?? ''),
+          onEmpty: Text('...'),
+        ),
+      ),
       body: Center(
-        child: Container(
-          child: title,
+        child: controller.obx(
+          (state) => Text(state?.name ?? ''),
+          onEmpty: Text('...'),
         ),
       ),
     );
@@ -283,14 +307,14 @@ class AnotherPageController extends GetxController {
   }
 }
 
-class AnotherPage extends GetView<AnotherPageController> {
+class AnotherScreen extends GetView<AnotherPageController> {
   static var route = GetPage(
     name: '/another',
-    page: () => const AnotherPage(),
+    page: () => const AnotherScreen(),
     binding: AnotherPageBindings(),
   );
 
-  const AnotherPage({Key? key}) : super(key: key);
+  const AnotherScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
